@@ -1,0 +1,85 @@
+#!/bin/bash
+
+## \author Bruno Combal
+## \date March 2013
+
+# source the ciop functions (e.g. ciop-log)
+source ${ciop_job_include}
+
+# define the exit codes
+SUCCESS=0
+ERR_ESGF=10
+ERR_NOINPUT=15
+ERR_PARAM_VAR=100
+ERR_PARAM_OID=110
+ERR_PARAM_PWD=111
+
+function cleanExit () {
+   local retval=$?
+   local msg=""
+   case "$retval" in
+     $SUCCESS) msg="Processing successfully concluded" ;;
+     $ERR_ESGF) msg="get_esgf_data failed; Exit." ;;
+     $ERR_NOINPUT) msg="Input missing; Exit." ;;
+     $ERR_PARAM_VAR) msg="Error when getting parameter ESGF_VAR; Exit.";;
+     $ERR_PARAM_OID) msg="Missing an openID or error while reading openid; EXIT.";;
+     $ERR_PARAM_PWD) msg="Missing a password or error while getting the password. Exit.";;
+     *)             msg="Unknown error. Exit." ;;
+   esac
+   [ "$retval" != "0" ] && ciop-log "ERROR" "Error $retval - ${msg}, processing aborted" || ciop-log "INFO" "$msg"
+   exit $retval
+}
+trap cleanExit EXIT
+
+#____________________________________
+outDir=$TMPDIR/output/
+mkdir -p $outDir
+
+# this script reads input from application.xml, no file to process
+variable=`ciop-getparam "ESGF_VAR"`
+[ $? != 0 ] && exit ERR_PARAM_VAR
+rdfURL="http://geowow.terradue.com/catalogue/esgf/${variable}/rdf"
+ciop-log "DEBUG" "rdfURL=${rdfURL}"
+# get rdfParam
+#bbox=`ciop-getparam "ESGF_BBOX"`
+timefrq=`ciop-getparam "ESGF_TIMEFREQ"`
+starttime=`ciop-getparam "ESGF_STARTTIME"`
+stoptime=`ciop-getparam "ESGF_STOPTIME"`
+experiment=`ciop-getparam "ESGF_EXPERIMENT"`
+count=`ciop-getparam "ESGF_COUNT"`
+levelMin=`ciop-getparam "ESGF_LEVELMIN"`
+levelMax=`ciop-getparam "ESGF_LEVELMAX"`
+
+ciop-log "DEBUG" "$bbox $timefrq $starttime $stoptime $experiment $model $ensemble $count"
+
+# for each input model name passed by hadoop, download the corresponding datasets
+while read model
+do
+    ciop-log "INFO" "Model: $model"
+    # !!!! empty lines MUST be rejected, else ANY model would be downloaded
+    if [ ! "$model" = '' ]; then
+    # default parameter list
+	declare -A rdfParam=(["bbox"]="${bbox}" ["time_frequency"]="${timefrq}" ["startTime"]="${starttime}" ["stopTime"]="${stoptime}" ["experiment"]="${experiment}" ["model"]="${model}" ["ensemble"]="${ensemble}" ["count"]="${count}")
+    
+    # build parameters line
+	rdfCommand=''
+	for key in ${!rdfParam[@]}
+	do
+	    if [ -n "${rdfParam[$key]}" ]; then
+		if [ -z "${rdfCommand}" ]; then
+		    rdfCommand='?'${key}'='${rdfParam[${key}]}
+		else
+		    rdfCommand=${rdfCommand}'&'${key}'='${rdfParam[${key}]}
+		fi
+	    fi
+	    ciop-log "DEBUG"  "COMMAND ${rdfCommand}"
+	done
+	ciop-log "DEBUG" "${rdfURL}${rdfCommand}"
+	for product in `ciop-casmeta ${rdfURL}${rdfCommand} -f rdf:about`
+        do
+        	ciop-log "INFO" "PRODUCT $product"
+		echo $starttime,$stoptime,$product | ciop-publish -s
+	done
+    fi
+done
+exit 0

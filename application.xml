@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="us-ascii"?>
+<application xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" id="ensemble_mean">
+  <jobTemplates>
+    <jobTemplate id="query_maker">
+      <streamingExecutable>/application/query_maker/run</streamingExecutable>
+      <defaultParameters>
+        <parameter id="ESGF_VAR" scope="runtime" title="Variable" abstract="Variable" >thetao</parameter>
+        <parameter id="ESGF_TIMEFREQ" scope="test">mon</parameter>
+        <parameter id="ESGF_STARTTIME" title="Start Time" abstract="The start date used to query the ESGF Gateway and process the ensemble mean" scope="runtime">2030-01-01</parameter>
+        <parameter id="ESGF_STOPTIME" title="Stop Time" abstract="The stop date used to query the ESGF Gateway and process the ensemble mean" scope="runtime">2032-12-01</parameter>
+        <parameter id="ESGF_EXPERIMENT" scope="runtime" title="Experiment" abstract="IPCC experiment (rcp26, rcp45, rcp60, rcp85)">rcp85</parameter>
+        <parameter id="time_frame" title="Time Frame" abstract="Time Frame to split the Ensemble Mean computation (Months)" scope="runtime" >1</parameter>
+        <parameter id="ESGF_COUNT" scope="test">50</parameter>
+      </defaultParameters>
+      <defaultJobconf>
+        <property id="mapred.task.timeout">3600000</property>
+      </defaultJobconf>
+    </jobTemplate>
+    <jobTemplate id="slice_time">
+      <streamingExecutable>/application/slice_time/run</streamingExecutable>
+      <defaultParameters>
+        <!--parameter id="ESGFCatalogue" title="ESGF Catalogue" abstract="The URL of a gateway based on Opensearch to query ESGF Datanodes" scope="test">http://geowow.terradue.com/catalogue/esgf/tos/description</parameter-->
+        <parameter id="time_frame">10</parameter>
+      </defaultParameters>
+      <defaultJobconf>
+        <property id="mapred.task.timeout">3600000</property>
+        <property id="ciop.job.max.tasks">1</property>
+      </defaultJobconf>
+    </jobTemplate>
+    <jobTemplate id="get_esgf">
+      <streamingExecutable>/application/get_esgf/run</streamingExecutable>
+      <defaultParameters>
+        <parameter id="ESGF_LEVELMIN" scope="test">0</parameter>
+        <parameter id="ESGF_LEVELMAX" scope="test">800</parameter>
+        <parameter id="ESGF_OPENID" type="LiteralData">https://pcmdi9.llnl.gov/esgf-idp/openid/combal</parameter>
+        <parameter id="ESGF_PASSWORD">70PassPhrase</parameter>
+        <parameter id="ESGF_EXPERIMENT" scope="test">rcp85</parameter>
+        <parameter id="mean_min_var" title="MinVar" abstract="Any value below minVar is considered as nodata" scope="runtime">200</parameter>
+        <parameter id="mean_max_var" title="MaxVar" abstract="Any value above maxVar is considered as nodata" scope="runtime">330</parameter>
+        <parameter id="retry" title="Retry" abstract="The number of attempts to download each dataset" scope="test">2</parameter>
+      </defaultParameters>
+      <defaultJobconf>
+        <property id="mapred.task.timeout">8600000</property>
+        <!--property id="ciop.job.max.tasks">1</property-->
+      </defaultJobconf>
+    </jobTemplate>
+    <jobTemplate id="stats">
+      <streamingExecutable>/application/ensemble_stats/run</streamingExecutable>
+      <defaultParameters />
+      <defaultJobconf>
+        <property id="mapred.task.timeout">8600000</property>
+      </defaultJobconf>
+    </jobTemplate>
+  </jobTemplates>
+  <workflow id="ensemble_mean" title="ensemble mean" abstract="Process different models to have the ensemble mean">
+    <workflowVersion>1.0</workflowVersion>
+    <node id="node_query_maker">
+      <job id="query_maker" />
+      <sources>
+        <!--source id="ESGF_MODEL_LIST" title="Models List" abstract="The list of ESGF models" refid="string:list" scope="runtime">BCC-CSM1.1,BNU-ESM,CCSM4,CMCC-CESM,CMCC-CM,CMCC-CMS,CNRM-CM5,CSIRO-Mk3.6.0,CanESM2,EC-EARTH,FGOALS-g2,FIO-ESM,GFDL-CM3,GFDL-ESM2G,GFDL-ESM2M,GISS-E2-H,GISS-E2-H-CC,GISS-E2-R,GISS-E2-R-CC HadGEM2-AO,HadGEM2-CC,HadGEM2-ES,IPSL-CM5A-LR,IPSL-CM5A-MR,IPSL-CM5B-LR,MIROC-ESM,MIROC-ESM-CHEM,MIROC5,MPI-ESM-LR,MPI-ESM-MR,MRI-CGCM3,MRI-ESM1,NorESM1-M,NorESM1-ME</source-->
+	<!--source id="ESGF_MODEL_LIST" title="Models List" abstract="The list of ESGF models" refid="string:list" scope="runtime">BNU-ESM,CMCC-CM,CMCC-CMS,CSIRO-Mk3.6.0,EC-EARTH,FGOALS-g2</source-->
+	<source id="ESGF_MODEL_LIST" title="Models List" abstract="The list of ESGF models comma separated" refid="string:list" scope="runtime">BNU-ESM,CSIRO-Mk3.6.0,FGOALS-g2</source>
+      </sources>
+      <parameters>
+        <!--parameter id="ESGFCatalogue" scope="test">http://geowow.terradue.com/catalogue/esgf/thetao/description</parameter-->
+      </parameters>
+    </node>
+    <node id="node_slice_time">
+      <job id="slice_time" />
+      <sources>
+        <source refid="wf:node">node_query_maker</source>
+      </sources>
+      <parameters>
+        <parameter id="time_frame">1</parameter>
+      </parameters>
+    </node>
+    <node id="node_get_esgf">
+      <job id="get_esgf" />
+      <sources>
+        <source refid="wf:node">node_slice_time</source>
+      </sources>
+      <parameters>
+        <!--parameter id="ESGF_LEVELMIN" scope="test" /-->
+        <!--parameter id="ESGF_LEVELMAX" scope="test" /-->
+        <parameter id="ESGF_EXPERIMENT" scope="test">rcp85</parameter>
+      </parameters>
+    </node>
+  </workflow>
+</application>

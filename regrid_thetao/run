@@ -1,0 +1,70 @@
+#!/bin/bash
+
+## \author Bruno Combal
+## \date March 2013
+
+# source the ciop functions (e.g. ciop-log)
+source ${ciop_job_include}
+
+#source /usr/local/uvcdat/install/bin/setup_cdat.sh
+source /application/share/uvcdat/1.2.0/bin/setup_cdat.sh
+
+# define the exit codes
+SUCCESS=0
+ERR_REGRID=10
+ERR_NOINPUT=15
+ERR_FNF=20
+
+function cleanExit () {
+   local retval=$?
+   local msg=""
+   case "$retval" in
+     $SUCCESS)      	msg="Processing successfully concluded" ;;
+     $ERR_REGRID) 	msg="Regrid failed; Exit." ;;
+     $ERR_FNF)      msg="File not found; Exit." ;;
+     $ERR_NOINPUT) msg="Input missing; Exit." ;;
+     *)             msg="Unknown error. Exit." ;;
+   esac
+   [ "$retval" != "0" ] && ciop-log "ERROR" "Error $retval - ${msg}, processing aborted" || ciop-log "INFO" "$msg"
+   exit $retval
+}
+trap cleanExit EXIT
+
+outDir=$TMPDIR/output/
+mkdir -p $outDir
+prefix='/share'
+
+# get input parameters. If a directory: scan it an get regular file names
+# if a file, accumulate the file names
+while read input_thetao 
+do
+    ciop-log "DEBUG" "Input parameter: ${input_thetao}"
+
+    extension=${input_thetao##*.}
+    if [ "${extension}" != 'nc' ]; then
+	ciop-log "DEBUG" "skipping $myfile"
+	continue
+    fi
+    
+    ciop-log "DEBUG" "copying ${input_thetao}"
+    myfile="`echo $input_thetao | ciop-copy -o $TMPDIR -`"
+
+    ciop-log "INFO" "Regriding ${myfile}"
+
+    [ -z "$myfile" ] && exit $ERR_NOINPUT
+    [ ! -e "$myfile" ] && exit $ERR_FNF
+    
+    ciop-log "DEBUG" "Product ${input_thetao} copied locally to $myfile"
+    
+    output_name=r_${myfile##*/}
+    
+    ciop-log "DEBUG" "$_CIOP_APPLICATION_PATH/regrid_thetao/bin/regrid_thetao.py -o $outDir/$output_name $myfile"
+    $_CIOP_APPLICATION_PATH/regrid_thetao/bin/regrid_thetao.py -o $outDir/$output_name $myfile 1>&2 
+    
+    [ $? -ne 0 ] && exit $ERR_REGRID || ciop-publish $outDir/$output_name
+    
+  # cleanup local files
+    rm -f $myfile $outDir/$output_name 1>&2
+    
+done
+

@@ -1,0 +1,72 @@
+#!/bin/bash
+
+## \author Bruno Combal
+## \date March 2013
+
+# source the ciop functions (e.g. ciop-log)
+source ${ciop_job_include}
+
+# define the exit codes
+SUCCESS=0
+ERR_ESGF=10
+ERR_NOINPUT=15
+ERR_PARAM_VAR=100
+ERR_PARAM_OID=110
+ERR_PARAM_PWD=111
+
+function cleanExit () {
+   local retval=$?
+   local msg=""
+   case "$retval" in
+     $SUCCESS) msg="Processing successfully concluded" ;;
+     $ERR_ESGF) msg="get_esgf_data failed; Exit." ;;
+     $ERR_NOINPUT) msg="Input missing; Exit." ;;
+     $ERR_PARAM_VAR) msg="Error when getting parameter ESGF_VAR; Exit.";;
+     $ERR_PARAM_OID) msg="Missing an openID or error while reading openid; EXIT.";;
+     $ERR_PARAM_PWD) msg="Missing a password or error while getting the password. Exit.";;
+     *)             msg="Unknown error. Exit." ;;
+   esac
+   [ "$retval" != "0" ] && ciop-log "ERROR" "Error $retval - ${msg}, processing aborted" || ciop-log "INFO" "$msg"
+   exit $retval
+}
+trap cleanExit EXIT
+
+#____________________________________
+outDir=$TMPDIR/output/
+mkdir -p $outDir
+
+time_frame=`ciop-getparam "time_frame"`
+ 
+#For each found resource and the time frame we make the queries by slicing in time
+while read model
+do
+    ciop-log "INFO" "Model: $model"
+    ciop-log "INFO" "time_frame $time_frame" 
+    start_date=`echo $model | cut -d , -f1 -`
+    stop_date=`echo $model | cut -d , -f2 -`
+    ciop-log "INFO" "start_date=$start_date"
+    ciop-log "INFO" "stop_date=$stop_date"
+    next_date=$start_date
+    ciop-log "DEBUG" "$(date --date=$next_date +"%s")"
+    
+    #for each time slice create a new file
+    while [ $(date --date=$next_date +"%s") -lt $(date --date=$stop_date +"%s") ];
+    do
+        old_date=$next_date
+	next_date=`date --date "$next_date + $time_frame months" +%F`;
+	future_date=`date --date "$next_date + $time_frame months" +%F`;	
+	ciop-log "INFO" "future_date=$future_date"
+	if [ $(date --date=$future_date +"%s") -gt $(date --date=$stop_date +"%s") ]; then
+		next_date=$stop_date
+	fi
+        ciop-log "INFO" "next_date=$next_date"
+	ciop-log "INFO" "old_date=$old_date"
+        model=`echo $model | cut -d , -f3 -`
+	finalNext_date=`date --date "$next_date - 1 days" +%F`;
+	echo -n "$model," >> $outDir$old_date"_"$finalNext_date
+	ciop-log "DEBUG" "`cat $outDir$old_date"_"$finalNext_date`"
+    done    
+done
+ciop-publish $outDir/*
+exit 0
+

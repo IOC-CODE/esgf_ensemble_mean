@@ -1,0 +1,139 @@
+#!/bin/bash
+
+## \author Bruno Combal
+## \date March 2013
+
+# source the ciop functions (e.g. ciop-log)
+source ${ciop_job_include}
+
+source /usr/local/uvcdat/1.2.0/bin/setup_cdat.sh
+
+# define the exit codes
+SUCCESS=0
+ERR_ESGF=10
+ERR_NOINPUT=15
+ERR_PARAM_VAR=100
+ERR_PARAM_OID=110
+ERR_PARAM_PWD=111
+
+function cleanExit () {
+   local retval=$?
+   local msg=""
+   case "$retval" in
+     $SUCCESS) msg="Processing successfully concluded" ;;
+     $ERR_ESGF) msg="get_esgf_data failed; Exit." ;;
+     $ERR_NOINPUT) msg="Input missing; Exit." ;;
+     $ERR_PARAM_VAR) msg="Error when getting parameter ESGF_VAR; Exit.";;
+     $ERR_PARAM_OID) msg="Missing an openID or error while reading openid; EXIT.";;
+     $ERR_PARAM_PWD) msg="Missing a password or error while getting the password. Exit.";;
+     *)             msg="Unknown error. Exit." ;;
+   esac
+   [ "$retval" != "0" ] && ciop-log "ERROR" "Error $retval - ${msg}, processing aborted" || ciop-log "INFO" "$msg"
+   exit $retval
+}
+trap cleanExit EXIT
+
+#____________________________________
+outputDir=$TMPDIR/output
+inputDir=$TMPDIR/input4ESGF/
+mkdir -p $outDir
+mkdir -p $inputDir
+
+# this script reads input from application.xml, no file to process
+openid=`ciop-getparam "ESGF_OPENID"`
+[ $? != 0 ] && exit ERR_PARAM_OID
+password=`ciop-getparam "ESGF_PASSWORD"`
+[ $? != 0 ] && exit ERR_PARAM_PWD
+#variable=`ciop-getparam "ESGF_VAR"`
+#[ $? != 0 ] && exit ERR_PARAM_VAR
+# get rdfParam
+bbox=`ciop-getparam "ESGF_BBOX"`
+timefrq=`ciop-getparam "ESGF_TIMEFREQ"`
+# ignore the model name read from the configuration file,
+# read them from the standard input
+# model=`ciop-getparam "ESGF_MODEL"` 
+count=`ciop-getparam "ESGF_COUNT"`
+levelMin=`ciop-getparam "ESGF_LEVELMIN"`
+levelMax=`ciop-getparam "ESGF_LEVELMAX"`
+mean_min_var=`ciop-getparam "mean_min_var"`
+mean_max_var=`ciop-getparam "mean_max_var"`
+retry=`ciop-getparam "retry"`
+experiment=""
+
+ciop-log "DEBUG" "$bbox $timefrq $starttime $endtime $experiment $model $ensemble $count"
+
+declare -A model_list
+
+while read inputFile
+do
+    mkdir -p $inputDir
+    cd $inputDir 
+    # !!!! empty lines MUST be rejected, else ANY model would be downloaded
+    if [ ! "$inputFile" = '' ]; then
+        ciop-log "INFO" "INPUT $inputFile"
+	lvlminCmd=`[ -n "${levelMin}" ] && echo "-zm ${levelMin}"`
+	lvlmaxCmd=`[ -n "${levelMax}" ] && echo "-zM ${levelMax}"`
+	input=`ciop-copy -o $inputDir $inputFile`
+        start=`basename $input | cut -d "_" -f1`
+	stop=`basename $input | cut -d "_" -f2`
+	for rdf in $(cat $input | tr "," "\n")
+	do
+		if [ "$experiment" = "" ]; then
+			experiment=`ciop-casmeta -f esgf:experiment $rdf`
+		fi
+		model=`ciop-casmeta -f esgf:model $rdf`
+                variable=`ciop-casmeta -f esgf:variable $rdf`
+		ciop-log "DEBUG" "MODEL: $model from rdf: $rdf"
+		if [ ! "$model" = '' ]; then
+			ciop-log "DEBUG" "Adding Model $model"
+			model_list[$model]=$model
+	        fi
+	  # process		
+		ciop-log "DEBUG" "ESGFClient  ${lvlminCmd} ${lvlmaxCmd} -s ${start} -e ${stop}  -o ${outputDir} -u \"${rdf}\" -O \"${openid}\" -p \"${password}\" -r 2"
+		ESGFClient  ${lvlminCmd} ${lvlmaxCmd} -s ${start} -e ${stop}  -o ${outputDir} -u \"${rdf}\" -O \"${openid}\" -p \"${password}\" -r ${retry}
+	done
+	ciop-log "DEBUG" "`ls -l $outputDir`"
+	for nc_test_file in $(find $outputDir -name "*.nc")
+	do
+		ciop-log "DEBUG" "nc file $nc_test_file"
+		cp $nc_test_file /tmp/
+		ciop-log "DEBUG" "`python ${_CIOP_APPLICATION_PATH}/get_esgf/bin/nc_info.py -time $nc_test_file | grep yearStart | cut -d ' ' -f2`"
+		ciop-log "DEBUG" "`python ${_CIOP_APPLICATION_PATH}/get_esgf/bin/nc_info.py -time $nc_test_file | grep yearEnd | cut -d ' ' -f2`"
+	done
+#	ciop-log "DEBUG" "python ${_CIOP_APPLICATION_PATH}/get_esgf/bin/nc_info.py -time $nc_test_file | grep yearStart | cut -d ' ' -f2"
+	startTime=`python ${_CIOP_APPLICATION_PATH}/get_esgf/bin/nc_info.py -time $nc_test_file | grep yearStart | cut -d ' ' -f2`
+        endTime=`python ${_CIOP_APPLICATION_PATH}/get_esgf/bin/nc_info.py -time $nc_test_file | grep yearEnd | cut -d ' ' -f2`
+	month=`python ${_CIOP_APPLICATION_PATH}/get_esgf/bin/nc_info.py -time $nc_test_file | grep monthStart | cut -d ' ' -f2`
+	rm -rf $outputDir/*.das
+	modelsFile=$TMPDIR/models.txt
+	for k in "${model_list[@]}"
+	do
+		echo -e $k >> $modelsFile	
+		ciop-log "DEBUG" "KEY = $k"	
+	done
+	cp $modelsFile /tmp/
+	mkdir $outputDir/results
+	tar_name=$variable"_"$experiment"_"$startTime"_"$endTime"_"$month.tgz
+	
+	ciop-log "DEBUG" "python ${_CIOP_APPLICATION_PATH}/ensemble_stats/bin/make_ensembleMean_tzyx.py -v $variable -minVar $mean_min_var -maxVar $mean_max_var -startYear $startTime -endYear $endTime -path $outputDir -outdir $outputDir/results -rcp $experiment -log $outputDir/ensemble.log -modellist $modelsFile -monthList $month"
+	ciop-log "DEBUG" "`ls -l $outputDir`"
+	python ${_CIOP_APPLICATION_PATH}/ensemble_stats/bin/make_ensembleMean_tzyx.py -v $variable -minVar $mean_min_var -maxVar $mean_max_var -startYear $startTime -endYear $endTime -path $outputDir -outdir $outputDir/results -rcp $experiment -log $outputDir/ensemble.log -modellist $modelsFile -monthList $month
+	
+	ERR_GET=$?
+	if [ "$ERR_GET" -ne 0 ]; then
+	    exit $ERR_GET
+	else
+	    cd $outputDir
+	    mv failed.txt ./results/
+
+	    # color the image
+	    ${_CIOP_APPLICATION_PATH}/get_esgf/bin/nc2color.sh ./results ./results
+
+	    tar vczf $tar_name ./results
+	    ls -l $tar_name
+	    ciop-publish -m $outputDir/$tar_name
+	    rm -rf $outputDir $inputDir
+	    rm -rf $TMPDIR
+	fi
+    fi
+done
